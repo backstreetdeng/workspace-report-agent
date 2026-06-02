@@ -1,0 +1,73 @@
+# 汽车市场战略决策智能体（PostgreSQL + PgVector 融合版）
+## start
+set user_question = {{user.input}}
+print "正在分析问题，自动匹配结构化数据 + 行业知识库..."
+
+# ==============================================
+# 步骤1：意图分类（自动判断查什么类型的数据）
+# ==============================================
+call_skill intent_classify
+args:
+  question: {{user_question}}
+  labels: 销量查询|车型查询|用户画像|口碑分析|趋势预测|政策影响|行业知识
+set intent = {{intent_classify.result}}
+
+print "识别意图：{{intent}}"
+
+# ==============================================
+# 步骤2：结构化数据查询（PostgreSQL）
+# ==============================================
+call_skill nl2sql
+args:
+  question: {{user_question}}
+  db_type: postgresql
+  schema: auto
+set sql_query = {{nl2sql.query}}
+
+call_skill pg_query
+args:
+  sql: {{sql_query}}
+set structured_data = {{pg_query.result}}
+
+# ==============================================
+# 步骤3：非结构化/语义查询（PgVector）
+# ==============================================
+call_skill pgvector_search
+args:
+  question: {{user_question}}
+  table: report_embeddings
+set vector_data = {{pgvector_search.result}}
+
+# ==============================================
+# 步骤4：自动合并两类数据
+# ==============================================
+call_skill data_merge
+args:
+  structured: {{structured_data}}
+  unstructured: {{vector_data}}
+set merged_data = {{data_merge.result}}
+
+# ==============================================
+# 步骤5：AI 综合分析（双数据来源）
+# ==============================================
+call_skill market_analyze
+args:
+  question: {{user_question}}
+  data: {{merged_data}}
+  intent: {{intent}}
+set conclusion = {{market_analyze.result}}
+
+# ==============================================
+# 输出最终结论
+# ==============================================
+print "===== 汽车市场战略分析结论 ====="
+print {{conclusion}}
+
+# ==============================================
+# 归档记忆
+# ==============================================
+save_memory
+content:
+  问题: {{user_question}}
+  结论: {{conclusion}}
+end
