@@ -56,11 +56,35 @@ NOISE_WORDS = {
     "用户", "政策", "补贴"
 }
 
-# 汽车品牌
+# 汽车品牌关键词：自主传统+自主新势力+主流合资+进口豪华全品类
 BRAND_KEYWORDS = {
-    "比亚迪", "特斯拉", "蔚来", "小鹏", "理想", "问界",
-    "小米", "极氪", "零跑", "哪吒", "长安", "吉利",
-    "长城", "奇瑞", "大众", "丰田", "本田", "宝马", "奔驰", "奥迪"
+    # 【一、国产传统自主品牌（大厂全系）】
+    "比亚迪", "腾势", "仰望", "方程豹",
+    "吉利", "领克", "银河",
+    "长城", "哈弗", "魏牌", "坦克", "欧拉",
+    "长安", "深蓝", "阿维塔", "启源",
+    "奇瑞", "星途", "捷途", "iCAR",
+    "红旗", "奔腾",
+    "广汽传祺", "埃安", "昊铂",
+    "荣威", "名爵", "智己", "飞凡",
+    "五菱", "宝骏",
+    "岚图", "猛士", "东风奕派", "东风风行",
+    "北京汽车", "北京越野", "江淮",
+
+    # 【二、国产新能源新势力（热门在售）】
+    "蔚来", "小鹏", "理想", "问界",
+    "小米", "极氪", "零跑", "哪吒",
+    "合众", "远航", "极狐",
+
+    # 【三、主流合资品牌（国内落地量产主力）】
+    "大众", "丰田", "本田", "日产", "马自达",
+    "别克", "雪佛兰", "福特", "现代", "起亚",
+
+    # 【四、进口/豪华品牌（国内常态化在售）】
+    "宝马", "奔驰", "奥迪",
+    "雷克萨斯", "英菲尼迪", "凯迪拉克", "沃尔沃",
+    "保时捷", "林肯", "路虎", "捷豹", "斯巴鲁",
+    "特斯拉"
 }
 
 # 技术类型映射
@@ -88,6 +112,7 @@ class Stage2Input:
     vector_metadata_filter: Dict = field(default_factory=dict)
     search_mode: str = "hybrid"
 
+    original_question: str = ""  # 原始问题，用于直接传给 nl2sql
     sql_question: str = ""
     sql_conditions: List[str] = field(default_factory=list)
     query_type: str = "market_overview"
@@ -163,6 +188,7 @@ def build_stage2_input(intent_result: Dict, original_question: str = None) -> St
         vector_brand_filter=vector_brand,
         vector_metadata_filter=metadata_filter,
         search_mode=strategy["search_mode"],
+        original_question=original_question,
         sql_question=sql_parts,
         sql_conditions=sql_conditions,
         query_type=strategy["sql_query_type"],

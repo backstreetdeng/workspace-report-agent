@@ -231,12 +231,29 @@ def _generate_summary(stage: str, status: str, data) -> str:
                 results = sql.get("results", [])
                 if results:
                     r = results[0]
-                    total = r.get("total_sales", 0)
-                    brand_count = r.get("brand_count", 0)
-                    model_count = r.get("model_count", 0)
-                    parts.append(f"SQL查询：{brand_count}品牌/{model_count}车型")
-                    if total > 0:
-                        parts.append(f"总销量：{total:,}")
+                    # 检查是否是聚合查询（market_overview）还是明细查询（sales_by_model/sales_with_price）
+                    if "brand_count" in r and "model_count" in r:
+                        # 聚合查询格式
+                        total = r.get("total_sales", 0)
+                        brand_count = r.get("brand_count", 0)
+                        model_count = r.get("model_count", 0)
+                        parts.append(f"SQL查询：{brand_count}品牌/{model_count}车型")
+                        if total > 0:
+                            parts.append(f"总销量：{total:,}")
+                    else:
+                        # 明细查询格式 - 从结果中统计品牌和车型数量
+                        brands = set()
+                        models = set()
+                        total_sales = 0
+                        for row in results:
+                            if row.get("brand"):
+                                brands.add(row.get("brand"))
+                            if row.get("model"):
+                                models.add(row.get("model"))
+                            total_sales += row.get("sales", 0) or 0
+                        parts.append(f"SQL查询：{len(brands)}品牌/{len(models)}车型")
+                        if total_sales > 0:
+                            parts.append(f"总销量：{total_sales:,}")
                 else:
                     parts.append(f"SQL查询：{sql.get('record_count', 0)}条")
             return " | ".join(parts) if parts else "无数据"
@@ -287,9 +304,16 @@ def _generate_summary(stage: str, status: str, data) -> str:
         if inner and isinstance(inner, dict):
             brand = inner.get("brand", "")
             success = inner.get("success", False)
-            summary = inner.get("summary", "") or (inner.get("data", {}) or {}).get("summary", "")
+            summary = inner.get("summary", {}) or (inner.get("data", {}) or {}).get("summary", {})
+            # summary 可能是字典，需要转换为字符串
             if summary:
-                return summary
+                if isinstance(summary, dict):
+                    parts = []
+                    for k, v in summary.items():
+                        if v and isinstance(v, str):
+                            parts.append(v)
+                    return " | ".join(parts) if parts else f"品牌 {brand} 分析完成" if brand else "品牌分析完成"
+                return str(summary)
             if brand:
                 return f"品牌 {brand} 分析完成"
             if success:

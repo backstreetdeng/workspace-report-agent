@@ -128,6 +128,7 @@ class IntentClassifier:
 
     # 品牌识别（Python辅助）
     BRAND_PATTERNS = {
+        "零跑": [r"零跑", r"C\d+", r"T03"],
         "比亚迪": [r"比亚迪", r"秦.*EV", r"汉.*EV", r"唐.*EV", r"宋.*EV", r"海豹", r"海狮", r"海鸥"],
         "特斯拉": [r"特斯拉", r"Tesla", r"Model\s*[3SYX]", r"model\s*[3syx]"],
         "问界": [r"问界", r"aito", r"M5", r"M7", r"M8"],

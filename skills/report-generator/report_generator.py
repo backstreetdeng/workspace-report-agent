@@ -60,23 +60,45 @@ def format_market_data(data: Dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "暂无数据"
 
 
-def format_brand_ranking(brands: list) -> str:
-    """格式化品牌排名 - 支持 HybridAgent competitors 格式"""
+def format_brand_ranking(brands: list, total_sales: int = None) -> str:
+    """格式化品牌排名 - 支持品牌聚合格式"""
     if not brands:
         return "暂无数据"
 
     lines = []
+    # 计算总销量（如果没有提供，从数据中计算）
+    if total_sales is None or total_sales == 0:
+        total_sales = sum(b.get("sales", 0) for b in brands)
+
     for i, brand in enumerate(brands[:10], 1):
-        # 兼容 HybridAgent competitors 格式
         name = brand.get("brand") or brand.get("name", "N/A")
-        # sales 可能是 sales 或 sales_volume
-        sales = brand.get("sales") or brand.get("sales_volume", 0)
-        # share 可能是 share 或 market_share
-        share = brand.get("share")
-        if share is None:
-            share = brand.get("market_share", 0)
+        sales = brand.get("sales") or brand.get("sales_volume", 0) or 0
+
+        # 计算市场份额
+        if total_sales > 0:
+            share = (sales / total_sales) * 100
+        else:
+            share = 0
 
         lines.append(f"{i}. **{name}** - {sales:,}辆 ({share:.1f}%)")
+
+    return "\n".join(lines)
+
+
+def format_competitors(competitors: list) -> str:
+    """格式化车型详情列表"""
+    if not competitors:
+        return "暂无数据"
+
+    lines = []
+    for i, comp in enumerate(competitors[:15], 1):
+        brand = comp.get("brand", "未知")
+        model = comp.get("model", "未知")
+        sales = comp.get("sales", 0) or 0
+        price = comp.get("price", "")
+        price_str = f" | {price}" if price else ""
+
+        lines.append(f"{i}. **{brand} {model}** - {sales:,}辆{price_str}")
 
     return "\n".join(lines)
 
@@ -273,6 +295,10 @@ def generate_report(
     swot_data = swot_result.get("data") if isinstance(swot_result, dict) else swot_result
     fourp_data = fourp_result.get("data") if isinstance(fourp_result, dict) else fourp_result
 
+    # 如果 market_data 为 None，自动从 sql_results 构建
+    if market_data is None and sql_results:
+        market_data = _build_market_data_from_sql(sql_results, question)
+
     # 构建报告内容
     content = {
         "header": {
@@ -352,6 +378,265 @@ def _generate_executive_summary(
     return summary
 
 
+def _get_model_prices_from_db():
+    """从数据库获取车型价格映射"""
+    try:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        import os
+
+        DB_CONFIG = {
+            "host": os.environ.get("DB_HOST", "192.168.3.146"),
+            "port": int(os.environ.get("DB_PORT", 5432)),
+            "database": os.environ.get("DB_NAME", "vectordb"),
+            "user": os.environ.get("DB_USER", "vectordb"),
+            "password": os.environ.get("DB_PASSWORD", "vectordb123")
+        }
+
+        conn = psycopg2.connect(**DB_CONFIG, cursor_factory=RealDictCursor)
+        cur = conn.cursor()
+
+        sql = """
+        SELECT
+            "车型名称",
+            "厂商",
+            "厂商指导价",
+            "级别",
+            CAST(NULLIF(REGEXP_REPLACE("厂商指导价", '[^0-9.]', '', 'g'), '') AS NUMERIC) * 10000 as price_yuan
+        FROM config_data
+        WHERE NULLIF(REGEXP_REPLACE("厂商指导价", '[^0-9.]', '', 'g'), '') ~ '^[0-9.]+$'
+        """
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        # 构建映射：车型名称 -> (厂商, 价格)
+        price_map = {}
+        for r in rows:
+            model = r.get("车型名称", "")
+            manufacturer = r.get("厂商", "")
+            price_str = r.get("厂商指导价", "")
+            price_yuan = r.get("price_yuan", 0)
+            if model:
+                price_map[model] = {
+                    "manufacturer": manufacturer,
+                    "price": price_str,
+                    "price_yuan": float(price_yuan) if price_yuan else 0
+                }
+        return price_map
+    except Exception as e:
+        print(f"Error getting model prices: {e}")
+        return {}
+
+
+def _build_market_data_from_sql(sql_results: list, question: str = None) -> Dict[str, Any]:
+    """从SQL查询结果构建市场数据"""
+    if not sql_results:
+        return {}
+
+    market_data = {}
+
+    # 价格区间映射
+    price_mapping = {
+        "10万以下": (0, 100000),
+        "10万以内": (0, 100000),
+        "10-15万": (100000, 150000),
+        "10-18万": (100000, 180000),
+        "10-20万": (100000, 200000),
+        "15-20万": (150000, 200000),
+        "15-25万": (150000, 250000),
+        "20-30万": (200000, 300000),
+        "20-35万": (200000, 350000),
+        "30-50万": (300000, 500000),
+        "30万以上": (300000, 9999999),
+        "50万以上": (500000, 9999999)
+    }
+
+    # 从问题中提取价格区间
+    min_price = 0
+    max_price = 99999999
+    price_range_text = ""
+    if question:
+        for keyword, (min_p, max_p) in price_mapping.items():
+            if keyword in question:
+                min_price = min_p
+                max_price = max_p
+                price_range_text = keyword
+                break
+
+    # 品牌名称映射表（车企 -> 品牌）
+    BRAND_NAME_MAP = {
+        # 比亚迪
+        "比亚迪汽车工业有限公司": "比亚迪",
+        "比亚迪汽车有限公司": "比亚迪",
+        "比亚迪": "比亚迪",
+        # 特斯拉
+        "特斯拉(上海)有限公司": "特斯拉",
+        "特斯拉": "特斯拉",
+        # 零跑
+        "零跑汽车有限公司": "零跑",
+        "零跑": "零跑",
+        # 吉利
+        "浙江吉利汽车有限公司": "吉利",
+        "吉利汽车集团有限公司": "吉利",
+        "吉利": "吉利",
+        # 长安
+        "重庆长安汽车股份有限公司": "长安",
+        "长安": "长安",
+        # 小米
+        "小米汽车科技有限公司": "小米",
+        "小米": "小米",
+        # 蔚来
+        "蔚来汽车科技（安徽）有限公司": "蔚来",
+        "蔚来": "蔚来",
+        # 小鹏
+        "小鹏": "小鹏",
+        # 理想
+        "理想汽车": "理想",
+        "理想": "理想",
+        # 五菱
+        "上汽通用五菱汽车股份有限公司": "五菱",
+        "五菱": "五菱",
+        # 广汽丰田
+        "广汽丰田汽车有限公司": "广汽丰田",
+        "广汽丰田": "广汽丰田",
+        "一汽丰田": "一汽丰田",
+        # 广汽
+        "广汽埃安新能源汽车股份有限公司": "广汽埃安",
+        "广汽埃安": "广汽埃安",
+        "广汽乘用车有限公司": "广汽传祺",
+        # 奇瑞
+        "奇瑞新能源汽车股份有限公司": "奇瑞",
+        "奇瑞汽车股份有限公司": "奇瑞",
+        "奇瑞": "奇瑞",
+        # 大众
+        "一汽-大众汽车有限公司": "一汽大众",
+        "上汽大众汽车有限公司": "上汽大众",
+        # 东风
+        "东风汽车集团有限公司": "东风",
+        "东风": "东风",
+        # 其他
+        "长城汽车股份有限公司": "长城",
+        "长城": "长城",
+        "吉利": "吉利",
+        "领克": "领克",
+        "极氪": "极氪",
+    }
+
+    def normalize_brand(name):
+        """标准化品牌名称"""
+        if not name:
+            return "未知"
+        # 先检查完整匹配
+        if name in BRAND_NAME_MAP:
+            return BRAND_NAME_MAP[name]
+        # 检查包含关系
+        for full_name, short_name in BRAND_NAME_MAP.items():
+            if full_name in name or name in full_name:
+                return short_name
+        return name
+
+    # 获取车型价格映射
+    model_prices = _get_model_prices_from_db()
+
+    def get_model_price(model_name):
+        """获取车型的价格信息"""
+        if model_name in model_prices:
+            return model_prices[model_name]
+        # 尝试模糊匹配
+        for config_model, price_info in model_prices.items():
+            if config_model in model_name or model_name in config_model:
+                return price_info
+        return None
+
+    # 检查是否是 market_overview 格式（total_sales, brand_count, model_count）
+    first = sql_results[0]
+    if "total_sales" in first or "brand_count" in first:
+        market_data["market_overview"] = {
+            "total_sales": first.get("total_sales", 0),
+            "brand_count": first.get("brand_count", 0),
+            "model_count": first.get("model_count", 0)
+        }
+
+    # 检查是否是品牌/车型销量格式
+    if "sales" in first or "brand" in first:
+        # 为每个结果匹配价格并过滤
+        enriched_results = []
+        no_price_models = []  # 没有价格信息的车型（暂不包含）
+
+        for row in sql_results:
+            model = row.get("model", row.get("通用名称", ""))
+            price_info = get_model_price(model)
+            price_yuan = price_info["price_yuan"] if price_info else 0
+
+            enriched_row = {
+                **row,
+                "price": price_info["price"] if price_info else "",
+                "price_yuan": price_yuan,
+                "has_price": price_info is not None
+            }
+
+            # 价格区间过滤（只过滤有价格信息的车型）
+            if price_range_text and price_yuan > 0:
+                if price_yuan < min_price or price_yuan > max_price:
+                    continue  # 跳过价格不符合的车型
+
+            enriched_results.append(enriched_row)
+
+        # 如果过滤后有数据，使用过滤结果；否则使用原始数据
+        if enriched_results:
+            sql_results = enriched_results
+
+        # 构建品牌排名（去重 + 品牌名映射）
+        brand_sales = {}
+        model_set = set()  # 用于去重车型
+        for row in sql_results:
+            raw_brand = row.get("brand", row.get("企业名称", "未知"))
+            model = row.get("model", row.get("通用名称", ""))
+            sales = row.get("sales", row.get("销量", 0))
+            if raw_brand and sales:
+                # 标准化品牌名称
+                brand = normalize_brand(raw_brand)
+                brand_sales[brand] = brand_sales.get(brand, 0) + sales
+            if model:
+                model_set.add(model)
+
+        # 排序并取Top 10
+        sorted_brands = sorted(brand_sales.items(), key=lambda x: x[1], reverse=True)[:10]
+        market_data["brand_ranking"] = [
+            {"brand": brand, "sales": sales, "rank": i + 1}
+            for i, (brand, sales) in enumerate(sorted_brands)
+        ]
+
+        # 添加车型详情（去重）
+        seen_models = set()
+        unique_competitors = []
+        for row in sql_results:
+            model = row.get("model", row.get("通用名称", ""))
+            if model and model not in seen_models:
+                seen_models.add(model)
+                unique_competitors.append({
+                    "brand": normalize_brand(row.get("brand", row.get("企业名称", ""))),
+                    "model": model,
+                    "sales": row.get("sales", 0),
+                    "price": row.get("price", row.get("price_yuan", 0)),
+                    "has_price": row.get("has_price", False)
+                })
+        market_data["competitors"] = unique_competitors[:20]
+
+        # 计算总销量和统计
+        total_sales = sum(r.get("sales", 0) for r in sql_results if r.get("sales"))
+        market_data["market_overview"] = market_data.get("market_overview", {})
+        market_data["market_overview"]["total_sales"] = total_sales
+        market_data["market_overview"]["brand_count"] = len(brand_sales)
+        market_data["market_overview"]["model_count"] = len(model_set)
+        if price_range_text:
+            market_data["market_overview"]["price_range"] = price_range_text
+
+    return market_data
+
+
 def _generate_markdown_report(content: Dict[str, Any]) -> str:
     """生成Markdown格式报告"""
     lines = []
@@ -381,23 +666,22 @@ def _generate_markdown_report(content: Dict[str, Any]) -> str:
     if market_data:
         lines.append("## 📊 市场数据\n")
 
-        # HybridAgent 格式: market_overview, competitors
-        # 原始格式: market_overview{...}, brand_ranking{...}, sales_trend{...}
         mo = market_data.get("market_overview", {})
         if mo:
             lines.append(format_market_data(mo))
 
-        # 优先使用 competitors（HybridAgent格式）
+        # 品牌排名（使用聚合后的 brand_ranking）
+        brands = market_data.get("brand_ranking", [])
+        if brands:
+            total = mo.get("total_sales", 0) if mo else 0
+            lines.append("\n### 品牌排名 (Top 10)\n")
+            lines.append(format_brand_ranking(brands, total))
+
+        # 车型详情（使用 competitors）
         competitors = market_data.get("competitors", [])
         if competitors:
-            lines.append("\n### 品牌排名 (Top 10)\n")
-            lines.append(format_brand_ranking(competitors))
-        else:
-            # 回退到 brand_ranking（原始格式）
-            brands = market_data.get("brand_ranking", [])
-            if brands:
-                lines.append("\n### 品牌排名 (Top 10)\n")
-                lines.append(format_brand_ranking(brands))
+            lines.append("\n### 车型详情\n")
+            lines.append(format_competitors(competitors))
 
         trend = market_data.get("sales_trend", [])
         if trend:

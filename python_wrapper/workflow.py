@@ -332,8 +332,9 @@ class MarketAnalysisWorkflow:
             tasks.append(("vector", asyncio.sleep(0, result={"success": True, "results": []})))
 
         # SQL query (always)
+        # 直接传原始问题给 nl2sql，让它自己解析
         tasks.append(("sql", self.caller.sql_query(
-            question=stage2_input.sql_question,
+            question=stage2_input.original_question or stage2_input.sql_question,
             execute=True
         )))
 

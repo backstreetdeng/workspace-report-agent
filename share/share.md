@@ -273,3 +273,27 @@ report: success=true, 执行时间=3.08s ✅
 | **访问地址** | http://localhost:8004/frontend_demo.html | 需通过HTTP访问 |
 | **后端端口** | 8003 | SSE分析服务 |
 | **前端端口** | 8004 | HTTP服务器 |
+
+---
+
+## PostgreSQL vectordb 数据库 DDL
+
+**文件位置**：`E:\openclaw\knowledge\MyVault\文档\工作区配置\PostgreSQL数据库DDL_vectordb.md`
+
+**连接信息**：host=192.168.3.146, port=5432, database=vectordb
+
+### 核心表结构
+
+| 表名 | 说明 | 关键字段 |
+|------|------|---------|
+| **chat_history** | AI对话历史 | session_id, role, content |
+| **chunks** | 文档切片+向量 | document_id, content, embedding(向量), brand, car_model, metadata(jsonb) |
+| **config_data** | 车型配置参数 | 车型名称, 能源类型, 续航(CLTC/WLTC), 电机功率, 电池类型, 价格带 等40+字段 |
+| **documents** | 文档元数据 | file_name, source, brand, category, upload_date |
+| **policy_documents** | 政策法规 | policy_id, title, policy_type, scope, effective_date, full_text, embedding, key_points(jsonb) |
+| **sales_import** | 销量数据 | 企业名称, 产品商标, 车型级别, 销量, 销售日期 |
+| **tech_data** | 工信部技术参数 | 驱动电机型号/功率, 电池类型/能量, CLTC/WLTC续航, 尺寸 等50+字段 |
+
+### 表关系
+- documents → chunks：一对多
+- 其余表：独立使用

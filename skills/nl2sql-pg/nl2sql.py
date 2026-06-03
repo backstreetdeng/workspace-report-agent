@@ -93,24 +93,18 @@ SQL_TEMPLATES = {
         ORDER BY sales DESC
     """,
 
-    # 价格区间+销量查询（通过 config_data 关联）
-    # 注意：厂商指导价格式为 "10.99万"，需要 *10000 转换为元
-    # 注意：车型名称可能不完全匹配，需要用LIKE模糊匹配
+    # 价格区间+销量查询（直接聚合销量表获取准确数据）
+    # 注意：价格过滤在报告生成层通过 config_data 匹配实现
     "sales_with_price": """
         SELECT
-            s."企业名称" as brand,
-            s."通用名称" as model,
-            s."技术类型" as tech_type,
-            s."乘用车细分" as segment,
-            SUM(s."销量") as sales,
-            c."厂商指导价" as price,
-            c."级别" as vehicle_level,
-            CAST(NULLIF(REGEXP_REPLACE(c."厂商指导价", '[^0-9.]', '', 'g'), '') AS NUMERIC) * 10000 as price_yuan
-        FROM sales_import s
-        LEFT JOIN config_data c ON s."通用名称" LIKE '%' || c."车型名称" || '%'
-                                AND s."企业名称" LIKE '%' || c."厂商" || '%'
+            "企业名称" as brand,
+            "通用名称" as model,
+            "技术类型" as tech_type,
+            "乘用车细分" as segment,
+            SUM("销量") as sales
+        FROM sales_import
         WHERE 1=1 {conditions}
-        GROUP BY s."企业名称", s."通用名称", s."技术类型", s."乘用车细分", c."厂商指导价", c."级别"
+        GROUP BY "企业名称", "通用名称", "技术类型", "乘用车细分"
         ORDER BY sales DESC
         LIMIT {limit}
     """,
@@ -190,7 +184,7 @@ KEYWORD_MAPPINGS = {
 QUERY_TYPE_PATTERNS = {
     "market_overview": ["市场规模", "市场概况", "总销量", "总体市场"],
     "sales_by_brand": ["品牌销量", "品牌排名", "哪个品牌卖得好", "品牌份额"],
-    "sales_by_model": ["车型销量", "车型排名", "什么车卖得好"],
+    "sales_by_model": ["车型销量", "车型排名", "什么车卖得好", "竞品"],
     "sales_trend": ["趋势", "走势", "增长", "销量变化", "同比", "环比"],
     "segment_distribution": ["细分市场", "市场分布", "份额分布"],
     "competitor_configs": ["配置", "参数", "续航", "功率", "价格"],
@@ -213,14 +207,27 @@ def parse_query(question: str) -> Tuple[str, Dict[str, Any]]:
         "limit": 20
     }
 
-    # 价格区间映射
-    price_keywords = ["10万以下", "10-15万", "15-20万", "20-30万", "30-50万", "50万以上"]
+    # 价格区间映射（支持更多区间）
+    price_keywords = [
+        "10万以下", "10万以内",
+        "10-15万", "10-18万", "10-20万",
+        "15-20万", "15-25万",
+        "20-30万", "20-35万",
+        "30-50万", "30万以上",
+        "50万以上"
+    ]
     price_mapping = {
         "10万以下": (0, 100000),
+        "10万以内": (0, 100000),
         "10-15万": (100000, 150000),
+        "10-18万": (100000, 180000),
+        "10-20万": (100000, 200000),
         "15-20万": (150000, 200000),
+        "15-25万": (150000, 250000),
         "20-30万": (200000, 300000),
+        "20-35万": (200000, 350000),
         "30-50万": (300000, 500000),
+        "30万以上": (300000, 9999999),
         "50万以上": (500000, 9999999)
     }
 
@@ -249,18 +256,29 @@ def parse_query(question: str) -> Tuple[str, Dict[str, Any]]:
                 max_score = score
                 query_type = qtype
 
-    # 提取品牌（优先处理，避免和其他类型混淆）
+    # 提取品牌
+    # 注意：竞品分析时不应限制品牌（用户想知道整个市场的竞品）
+    # 只有在明确询问某品牌时才加品牌过滤
     brands = []
     for brand in ["比亚迪", "特斯拉", "蔚来", "小鹏", "理想", "问界", "极氪", "零跑", "小米"]:
         if brand in question:
             brands.append(brand)
 
-    if brands:
+    # 检查是否是竞品分析（"X的竞品分析"中X是被分析对象，不是过滤条件）
+    is_competitive_analysis = "竞品" in question or query_type in ["sales_by_model", "brand_comparison", "competitor_configs"]
+
+    # 竞品分析时不加品牌过滤
+    skip_brand_filter = is_competitive_analysis
+
+    if brands and not skip_brand_filter:
         # sales_import 表用 "企业名称"，config_data 表用 "厂商"
         if query_type == "sales_with_price":
             params["conditions"].append(f'(s."企业名称" LIKE \'%{brands[0]}%\' OR c."厂商" LIKE \'%{brands[0]}%\')')
         else:
             params["conditions"].append(f'"企业名称" LIKE \'%{brands[0]}%\'')
+        params["brand"] = brands[0]
+    elif brands:
+        # 竞品分析时，记录品牌信息但不作为过滤条件
         params["brand"] = brands[0]
 
     # 提取技术类型（只匹配技术相关关键词）
@@ -277,17 +295,14 @@ def parse_query(question: str) -> Tuple[str, Dict[str, Any]]:
             break
 
     # 提取价格区间（使用 config_data 的 厂商指导价，格式为 "10.99万" 需 *10000）
+    # 注意：价格条件通过 sales_import 表的乘用车细分来间接过滤，不做精确价格匹配
     for keyword in price_keywords:
         if keyword in question:
+            # 价格区间信息存储在 params 中，由调用方处理
             min_price, max_price = price_mapping[keyword]
-            if max_price < 9999999:
-                if query_type == "sales_with_price":
-                    # 使用转换后的价格 c."厂商指导价" * 10000 BETWEEN min_price AND max_price
-                    params["conditions"].append(
-                        f'NULLIF(REGEXP_REPLACE(c."厂商指导价", \'[^0-9.]*\', \'\', \'g\'), \'\') ~ \'^[0-9.]+$\' '
-                        f'AND CAST(NULLIF(REGEXP_REPLACE(c."厂商指导价", \'[^0-9.]*\', \'\', \'g\'), \'\') AS NUMERIC) * 10000 BETWEEN {min_price} AND {max_price}'
-                    )
-                # 如果不是 sales_with_price 类型，则忽略价格条件（sales_import 没有价格字段）
+            params["price_range"] = keyword
+            params["min_price"] = min_price
+            params["max_price"] = max_price
             break
 
     # 提取细分市场
@@ -301,10 +316,8 @@ def parse_query(question: str) -> Tuple[str, Dict[str, Any]]:
     }
     for keyword in segment_keywords:
         if keyword in question:
-            if query_type == "sales_with_price":
-                params["conditions"].append(f'c."级别" LIKE \'%{keyword}%\'')
-            else:
-                params["conditions"].append(f'"乘用车细分" = \'{segment_mapping[keyword]}\'')
+            # 细分市场直接过滤 sales_import 表
+            params["conditions"].append(f'"乘用车细分" = \'{segment_mapping[keyword]}\'')
             params["segment"] = keyword
             break
 
