@@ -15,6 +15,7 @@ Used Bash-style `python - <<'PY'` in PowerShell, causing a parser error.
 ### Details
 PowerShell requires a here-string piped into Python, for example:
 `@' ... '@ | python -`
+This mistake recurred on 2026-06-17 while testing `StageStatus("warning")`; the follow-up command used the PowerShell-native form successfully.
 
 ### Suggested Action
 Use PowerShell-native here-strings when running inline Python in this workspace.
