@@ -8,12 +8,14 @@ import sys
 import urllib.request
 import io
 
-# Fix Windows GBK encoding issue
-if sys.platform == "win32":
-    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
-
 TAVILY_URL = "https://api.tavily.com/search"
+
+
+def ensure_utf8_stdio():
+    """Fix Windows GBK encoding for CLI mode without mutating host apps on import."""
+    if sys.platform == "win32":
+        sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+        sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding="utf-8", errors="replace")
 
 
 def load_key():
@@ -125,6 +127,8 @@ def to_markdown(obj: dict) -> str:
 
 
 def main():
+    ensure_utf8_stdio()
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--query", required=True)
     ap.add_argument("--max-results", type=int, default=5)
