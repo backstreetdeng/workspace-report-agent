@@ -71,42 +71,104 @@ class PPTRequest(BaseModel):
     analysis_data: Optional[Dict[str, Any]] = None
 
 
-def _is_direct_response_query(question: str) -> bool:
-    """Return True for meta/help/chitchat queries that must not run market analysis."""
+ENTRY_ROUTE_HELP_MARKERS = (
+    "你能帮我", "你可以帮我", "可以帮我", "能为我", "能帮我", "帮我什么", "什么帮助",
+    "你能做什么", "你可以做什么", "你会做什么", "你有什么能力", "你有什么用",
+    "你能干什么", "你能干啥", "可以干什么", "能干什么", "能干啥",
+    "有什么功能", "有哪些功能", "功能介绍", "使用说明", "怎么用", "如何使用",
+    "这个页面怎么用", "这个智能体怎么用", "你是谁", "干嘛", "介绍一下", "介绍你自己",
+    "帮助", "help", "你好", "您好", "hi", "hello", "hey", "在吗",
+)
+
+ENTRY_ROUTE_ANALYSIS_MARKERS = (
+    "分析", "研究", "评估", "预测", "判断", "对比", "比较", "竞品", "竞争", "格局",
+    "市场", "销量", "销售", "份额", "市占", "趋势", "政策", "机会", "风险",
+    "价格", "价格带", "定位", "配置", "产品", "渠道", "用户", "舆情", "口碑",
+    "同比", "环比", "增速", "增长", "下滑", "集中度", "出口", "补贴", "购置税",
+    "报告", "策略", "战略", "建议", "复盘", "洞察", "结论", "置信度",
+)
+
+ENTRY_ROUTE_DOMAIN_MARKERS = (
+    "比亚迪", "特斯拉", "吉利", "小米", "长安", "长城", "广汽", "上汽", "理想",
+    "蔚来", "小鹏", "问界", "零跑", "极氪", "埃安", "奇瑞", "哪吒",
+    "新能源", "乘用车", "燃油车", "混动", "插混", "纯电", "增程", "suv", "mpv",
+    "轿车", "车型", "品牌", "车企", "汽车", "车市", "15-20万", "20万",
+)
+
+
+def _classify_entry_route(question: str) -> Dict[str, Any]:
+    """Classify whether the entry question should run market orchestration."""
     normalized = re.sub(r"\s+", "", (question or "").strip().lower())
     if not normalized:
-        return False
+        return {
+            "route": "direct_response",
+            "confidence": 1.0,
+            "reason": "empty_question",
+            "help_hits": [],
+            "analysis_hits": [],
+            "domain_hits": [],
+        }
 
-    analysis_markers = (
-        "分析", "研究", "评估", "预测", "判断", "对比", "竞品", "竞争", "格局",
-        "市场", "销量", "份额", "趋势", "政策", "机会", "风险", "价格", "品牌",
-        "比亚迪", "特斯拉", "吉利", "小米", "新能源", "乘用车", "suv",
-    )
-    if any(marker in normalized for marker in analysis_markers):
-        return False
+    analysis_hits = [marker for marker in ENTRY_ROUTE_ANALYSIS_MARKERS if marker.lower() in normalized]
+    domain_hits = [marker for marker in ENTRY_ROUTE_DOMAIN_MARKERS if marker.lower() in normalized]
+    help_hits = [marker for marker in ENTRY_ROUTE_HELP_MARKERS if marker.lower() in normalized]
 
-    direct_queries = {
-        "你好", "您好", "hi", "hello", "hey", "在吗",
-        "你是谁", "你能做什么", "你能做什么?", "你能做什么？",
-        "你可以做什么", "你会做什么", "你有什么能力", "介绍一下你自己",
-        "帮助", "help", "怎么用", "使用说明", "功能介绍",
+    # Analysis/domain evidence wins over help phrasing. Example:
+    # "你能帮我分析比亚迪最近12个月市场策略吗" must run the orchestrator.
+    if analysis_hits or domain_hits:
+        return {
+            "route": "market_analysis",
+            "confidence": min(0.98, 0.72 + 0.05 * (len(analysis_hits) + len(domain_hits))),
+            "reason": "market_analysis_signal",
+            "help_hits": help_hits,
+            "analysis_hits": analysis_hits,
+            "domain_hits": domain_hits,
+        }
+
+    if help_hits:
+        return {
+            "route": "direct_response",
+            "confidence": min(0.98, 0.74 + 0.04 * len(help_hits)),
+            "reason": "help_or_capability_signal",
+            "help_hits": help_hits,
+            "analysis_hits": analysis_hits,
+            "domain_hits": domain_hits,
+        }
+
+    if len(normalized) <= 8:
+        return {
+            "route": "direct_response",
+            "confidence": 0.62,
+            "reason": "short_non_market_query",
+            "help_hits": help_hits,
+            "analysis_hits": analysis_hits,
+            "domain_hits": domain_hits,
+        }
+
+    return {
+        "route": "direct_response",
+        "confidence": 0.55,
+        "reason": "no_market_analysis_signal",
+        "help_hits": help_hits,
+        "analysis_hits": analysis_hits,
+        "domain_hits": domain_hits,
     }
-    if normalized in direct_queries:
-        return True
-
-    direct_patterns = (
-        "你能帮我做什么", "你可以帮我做什么", "这个页面怎么用", "这个智能体怎么用",
-        "有什么功能", "有哪些功能", "能干什么", "可以干什么",
-    )
-    return any(pattern in normalized for pattern in direct_patterns)
 
 
-def _direct_response_payload(question: str) -> Dict[str, Any]:
+def _is_direct_response_query(question: str) -> bool:
+    """Return True for questions that should be answered without orchestration."""
+    return _classify_entry_route(question)["route"] == "direct_response"
+
+
+def _direct_response_payload(question: str, route_decision: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    route_decision = route_decision or _classify_entry_route(question)
     report = "\n".join(
         [
             "## 我能做什么",
             "",
             "我是汽车市场战略分析智能体，适合处理需要证据链和结构化判断的市场问题。",
+            "",
+            "我会先自主判断问题类型：能力介绍、使用帮助、闲聊类问题直接回答；只有出现明确的市场/品牌/车型/销量/政策/机会等分析信号时，才启动 ReAct 编排、SQL、RAG 或 Web 检索。",
             "",
             "我可以帮你做：",
             "- 市场格局分析：销量、份额、集中度、头部/腰部/长尾结构。",
@@ -144,10 +206,11 @@ def _direct_response_payload(question: str) -> Dict[str, Any]:
         "execution_trace": [
             {
                 "agent": "market_strategy_agent",
-                "skill": "direct-response-router",
-                "action": "answer_without_orchestration",
+                "skill": "entry-route-classifier",
+                "action": "classify_and_answer_without_orchestration",
                 "status": "done",
-                "summary": "识别为能力介绍/闲聊问题，未启动 strategy-orchestrator、SQL、RAG 或 Web 检索。",
+                "summary": f"入口路由判断为 {route_decision['route']}，原因：{route_decision['reason']}。未启动 strategy-orchestrator、SQL、RAG 或 Web 检索。",
+                "detail": route_decision,
             }
         ],
         "skill_trace": [],
@@ -513,8 +576,9 @@ def _run_analysis(
 ) -> Dict[str, Any]:
     question = request.question.strip()
     started = time.time()
-    if _is_direct_response_query(question):
-        payload = _direct_response_payload(question)
+    route_decision = _classify_entry_route(question)
+    if route_decision["route"] == "direct_response":
+        payload = _direct_response_payload(question, route_decision)
         payload["execution_time"] = round(time.time() - started, 2)
         if event_callback:
             event_callback(
@@ -522,8 +586,8 @@ def _run_analysis(
                     "phase": "Direct",
                     "stage": "stage1",
                     "status": "done",
-                    "summary": "识别为能力介绍/闲聊问题，直接回答，不启动市场分析编排。",
-                    "detail": {"route": "direct_response_no_orchestration"},
+                    "summary": f"入口路由判断为直接回答：{route_decision['reason']}。不启动市场分析编排。",
+                    "detail": route_decision,
                 }
             )
         return payload
@@ -655,16 +719,17 @@ async def analyze_sse(request: AnalyzeRequest) -> StreamingResponse:
 
     async def stream() -> Iterable[str]:
         question = request.question.strip()
-        if _is_direct_response_query(question):
-            result = _direct_response_payload(question)
+        route_decision = _classify_entry_route(question)
+        if route_decision["route"] == "direct_response":
+            result = _direct_response_payload(question, route_decision)
             yield _sse(
                 "react",
                 {
                     "phase": "Direct",
                     "stage": "stage1",
                     "status": "done",
-                    "summary": "识别为能力介绍/闲聊问题，直接回答；未启动 SQL/RAG/ReAct 市场分析。",
-                    "detail": {"route": "direct_response_no_orchestration"},
+                    "summary": f"入口路由判断为直接回答：{route_decision['reason']}。未启动 SQL/RAG/ReAct 市场分析。",
+                    "detail": route_decision,
                 },
             )
             yield _sse("complete", result)
@@ -675,6 +740,16 @@ async def analyze_sse(request: AnalyzeRequest) -> StreamingResponse:
         entities = _infer_entities(question)
         start = time.time()
 
+        yield _sse(
+            "react",
+            {
+                "phase": "Route",
+                "stage": "stage0",
+                "status": "done",
+                "summary": f"入口路由判断为市场分析：{route_decision['reason']}。进入 strategy-orchestrator。",
+                "detail": route_decision,
+            },
+        )
         yield _sse(
             "progress",
             {

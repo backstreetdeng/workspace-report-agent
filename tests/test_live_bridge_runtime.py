@@ -14,6 +14,7 @@ if str(ROOT) not in sys.path:
 
 from python_wrapper.live_agent_server import (  # noqa: E402
     AnalyzeRequest,
+    _classify_entry_route,
     _is_direct_response_query,
     _normalize_time_range,
     _run_analysis,
@@ -36,16 +37,31 @@ class LiveBridgeRuntimeTest(unittest.TestCase):
 
     def test_meta_help_query_does_not_start_orchestration(self) -> None:
         self.assertTrue(_is_direct_response_query("你能做什么？"))
+        self.assertTrue(_is_direct_response_query("你能帮我什么"))
+        self.assertTrue(_is_direct_response_query("你可以帮我什么"))
+        self.assertTrue(_is_direct_response_query("你能给我什么帮助"))
+        self.assertTrue(_is_direct_response_query("这个智能体怎么用"))
+        self.assertTrue(_is_direct_response_query("你是干嘛的"))
         self.assertTrue(_is_direct_response_query("你好"))
         self.assertFalse(_is_direct_response_query("分析比亚迪最近12个月市场策略"))
+        self.assertFalse(_is_direct_response_query("你能帮我分析比亚迪最近12个月市场策略吗"))
 
-        result = _run_analysis(AnalyzeRequest(question="你能做什么？"))
+        direct_route = _classify_entry_route("你能帮我什么")
+        analysis_route = _classify_entry_route("你能帮我分析比亚迪最近12个月市场策略吗")
+        self.assertEqual(direct_route["route"], "direct_response")
+        self.assertEqual(analysis_route["route"], "market_analysis")
+        self.assertIn("帮我", "".join(direct_route["help_hits"]))
+        self.assertIn("分析", analysis_route["analysis_hits"])
+        self.assertIn("比亚迪", analysis_route["domain_hits"])
+
+        result = _run_analysis(AnalyzeRequest(question="你能帮我什么"))
 
         self.assertEqual(result["analysis_type"], "direct_response")
         self.assertEqual(result["cycles_used"], 0)
         self.assertEqual(result["stop_reason"], "direct_response_no_orchestration")
         self.assertIn("我能做什么", result["report"])
         self.assertNotIn("七步法业务战略分析报告", result["report"])
+        self.assertEqual(result["execution_trace"][0]["detail"]["route"], "direct_response")
 
     def test_react_trace_exposes_plan_act_reflect_quality(self) -> None:
         trace = _react_trace(
