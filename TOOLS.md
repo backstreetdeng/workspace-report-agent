@@ -16,48 +16,79 @@ E:\AI\data\envs\car_agent_env\ai-decision\rag-engine
 
 ## 架构概览
 
-本 Agent 采用**深度集成架构**（方案B），核心是 `HybridMarketAgent`，自动融合：
+本 Agent 采用**自主编排架构**，复杂市场分析的控制大脑是 `strategy-orchestrator`。
+
+`strategy-orchestrator` 负责理解用户目标、设计证据路径、选择工具/Skill/子 Agent、执行 ReAct 循环、维护证据账本、触发质量门禁并生成最终结论。
+
+`HybridMarketAgent` 仅保留为兼容工具或数据聚合工具，可在 `strategy-orchestrator` 明确需要时被调用；它不是复杂市场分析的主入口，也不应替代 `strategy-orchestrator` 做业务决策。
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    HybridMarketAgent                         │
+│                 strategy-orchestrator agent                   │
 │                                                             │
-│  统一入口: analyze(query)                                   │
+│  控制大脑: orchestrate(task)                                │
 │           ↓                                                 │
-│  意图理解 → 判断使用哪些数据源                              │
+│  Plan → Act → Observe → Reflect → Re-plan                   │
 │           ↓                                                 │
-│  ┌──────────────────┐  ┌──────────────────┐              │
-│  │  结构化数据查询   │ + │  RAG 语义检索    │              │
-│  │  PostgreSQL      │  │  向量数据库       │              │
-│  │  销量/品牌/配置  │  │  行业报告/政策   │              │
-│  └──────────────────┘  └──────────────────┘              │
-│           ↓                     ↓                            │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │            综合分析与输出                           │      │
-│  │  市场洞察 + 竞品分析 + 机会识别 + 置信度评估      │      │
-│  └──────────────────────────────────────────────────┘      │
+│  ┌──────────────┐ ┌──────────────┐ ┌──────────────────┐   │
+│  │ SQL 数据工具 │ │ RAG/Web 检索 │ │ Strategy Skill    │   │
+│  │ 销量/品牌/配置│ │ 报告/政策/新闻│ │ 七阶段证据分析契约 │   │
+│  └──────────────┘ └──────────────┘ └──────────────────┘   │
+│           ↓                                                 │
+│  ┌──────────────────────────────────────────────────┐       │
+│  │ EvidenceLedger + QualityGate + Report/PPT         │       │
+│  │ 事实/推断分离 + 证据来源 + 置信度 + 降级说明       │       │
+│  └──────────────────────────────────────────────────┘       │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-### 深度集成 vs 轻量集成
+### 主控编排 vs 工具调用
 
 | 方式 | 说明 |
 |------|------|
-| **深度集成（推荐）** | HybridMarketAgent 自动组合结构化数据 + RAG 上下文，用户只需调用 `analyze()` |
-| **轻量集成（备用）** | 独立工具调用，需手动组合结果 |
+| **主控编排（推荐）** | `strategy-orchestrator` 接收复杂任务，动态选择 SQL/RAG/Web/Skill/子 Agent，并执行证据账本和质量门禁 |
+| **工具调用（被调度）** | SQL、RAG、Web、报告生成、`HybridMarketAgent` 等能力只作为工具，由 `strategy-orchestrator` 决定何时调用 |
+| **手工独立调用（调试）** | 仅用于排查单个工具、准备数据或验证接口，不作为正式市场分析主链路 |
 
 ---
 
 ## 核心工具
 
-### 工具1: HybridMarketAgent（深度集成）
+### 工具1: strategy-orchestrator（控制大脑）
 
-**推荐使用**，一个入口，自动完成：
+**复杂市场分析默认使用**，负责：
+- 识别用户真实决策目标和约束
+- 设计证据采集路径和工具调用顺序
+- 调用结构化数据、RAG、Web、分析框架、报告生成等工具
+- 维护 EvidenceLedger，区分事实、推断和不确定性
+- 在证据不足、证据冲突或工具失败时主动补证、重规划或降级说明
+- 输出带来源、时间范围、指标口径和置信度的最终结果
+
+**调用原则**：
+```text
+用户 / 网页端
+  -> live_agent_server.py 或主 Agent 桥接层
+  -> strategy-orchestrator
+  -> 工具 / Skill / 子 Agent
+  -> EvidenceLedger / QualityGate
+  -> 报告或 PPT
+```
+
+---
+
+### 工具1A: HybridMarketAgent（兼容工具）
+
+**仅作为兼容工具或数据聚合工具使用**，可完成：
 - 结构化数据查询（销量/品牌/配置）
 - RAG 上下文检索（行业报告/政策/历史）
-- 综合分析输出
+- 基础综合分析输出
 
-**Python 调用**：
+**边界要求**：
+- 不作为复杂市场分析主入口。
+- 不替代 `strategy-orchestrator` 做任务拆解、工具选择、证据冲突处理和最终决策。
+- 若用于正式分析，应由 `strategy-orchestrator` 调用，并将结果写入 EvidenceLedger 后再进入质量门禁。
+
+**调试调用**：
 ```python
 from market_strategy.hybrid_agent import HybridMarketAgent
 
@@ -247,7 +278,7 @@ E:\AI\data\envs\car_agent_env\Scripts\python.exe E:\AI\data\envs\car_agent_env\a
 
 ### 工具11: RAG 检索（备用接口）
 
-RAG 检索的**备用接口**，仅在需要独立调用 RAG 时使用。**推荐使用 HybridMarketAgent**。
+RAG 检索的**备用接口**，仅在 `strategy-orchestrator` 需要补充行业报告、政策、历史材料或调试单独检索链路时使用。正式复杂分析中，RAG 结果必须回写 EvidenceLedger，并接受质量门禁检查。
 
 **调用方式**：
 ```bash
@@ -308,27 +339,23 @@ E:\AI\data\envs\car_agent_env\Scripts\python.exe document_ingest.py --dir ./repo
 
 ## 使用流程示例
 
-### 流程1: 使用 HybridMarketAgent（推荐）
+### 流程1: 使用 strategy-orchestrator（推荐主链路）
 
 ```python
-from market_strategy.hybrid_agent import HybridMarketAgent
-from market_strategy.schemas import MarketInput
+# 推荐由 live_agent_server.py 或主 Agent 桥接层转交给 strategy-orchestrator。
+# 下例使用 agents/strategy-orchestrator 当前提供的便捷接口。
+from executors.orchestrator import orchestrate_task
 
-agent = HybridMarketAgent()
-
-# 直接分析，Agent 自动决定使用哪些数据源
-output = agent.analyze(
-    MarketInput(
-        query="分析比亚迪市场策略",
-        time_range="最近12个月"
-    )
+result = orchestrate_task(
+    query="分析比亚迪市场策略",
+    time_range="最近12个月",
 )
 
-print(f"置信度: {output.confidence}")
-print(f"市场规模: {output.market_overview.scale}")
+print(f"置信度: {result.confidence}")
+print(f"质量门禁: {result.quality_passed}")
 ```
 
-### 流程2: 分步使用工具
+### 流程2: 分步使用工具（仅限调试或数据准备）
 
 ```bash
 # 1. 获取数据总览
@@ -409,9 +436,10 @@ print(status)
 
 ## 注意事项
 
-1. **推荐使用 HybridMarketAgent** - 一个入口，自动集成所有能力
-2. **RAG 优雅降级** - RAG 不可用时自动降级到纯结构化分析
-3. **路径问题** - 所有 Python 命令使用绝对路径
-4. **数据时效** - 市场数据更新频率为每月初
-5. **置信度** - 所有分析输出包含置信度评估，低于 0.7 需要人工复核
+1. **推荐使用 strategy-orchestrator** - 复杂市场分析的控制大脑，统一负责规划、调度、证据账本、质量门禁和最终结论
+2. **HybridMarketAgent 仅作兼容工具** - 可被 `strategy-orchestrator` 调用，不作为正式复杂分析主入口
+3. **RAG 优雅降级** - RAG 不可用时必须在 EvidenceLedger 和最终报告中说明缺口，不能伪装为高置信度结论
+4. **路径问题** - 所有 Python 命令使用绝对路径
+5. **数据时效** - 市场数据更新频率为每月初
+6. **置信度** - 所有分析输出包含置信度评估，低于 0.7 需要人工复核
 
