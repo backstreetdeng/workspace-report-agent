@@ -26,6 +26,29 @@ RAG_ENGINE_ROOT = Path(r"E:\AI\data\envs\car_agent_env\ai-decision\rag-engine")
 if str(RAG_ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(RAG_ENGINE_ROOT))
 
+EXPECTED_PYTHON = Path(r"E:\AI\data\envs\car_agent_env\Scripts\python.exe")
+CALLBACK_CLIENT_PATH = Path(r"C:\Users\11489\.openclaw\workspace-market\fastapi_18003_adapter\callback_client.py")
+CALLBACK_URL = "http://127.0.0.1:18003/callback"
+
+def _emit_callback(session_id: str, phase: str, status: str, summary: str, agent: str = "data-agent") -> None:
+    if not session_id:
+        return
+    import subprocess
+    cmd = [
+        str(EXPECTED_PYTHON),
+        str(CALLBACK_CLIENT_PATH),
+        "--session-id", session_id,
+        "--callback-url", CALLBACK_URL,
+        "--phase", phase,
+        "--status", status,
+        "--agent", agent,
+        "--summary", summary,
+    ]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    except Exception:
+        pass
+
 
 REQUIRED_TARGETED_SQL_BLOCKS = [
     "market_overview",
@@ -66,6 +89,8 @@ BLOCK_METRICS = {
 def run_targeted_sql_pack(
     analysis_plan: Any,
     connection_factory: Optional[Callable[[], Any]] = None,
+    session_id: Optional[str] = None,
+    callback_url: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Run the fixed SQL pack for the shared analysis plan."""
     plan = _plan_to_dict(analysis_plan)
