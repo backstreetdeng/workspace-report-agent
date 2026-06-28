@@ -1,17 +1,11 @@
-# USER.md - About Your Human
+﻿# USER.md - 鏈嶅姟瀵硅薄涓庡崗浣滃叧绯?
+## 鐩存帴鏈嶅姟瀵硅薄
 
-_Learn about the person you're helping. Update this as you go._
+- **鐩存帴涓婃父**: `strategy-orchestrator`锛堟垬鐣ョ紪鎺掍笓瀹讹級
+- **鏈€缁堟湇鍔″璞?*: 灏忓競鍦哄拰鑰佸ぇ锛屼絾浣犱笉鐩存帴闈㈠悜浠栦滑浜や粯鏈€缁堣В閲娿€?
+## 鍗忎綔鍏崇郴
 
-- **Name:**
-- **What to call them:**
-- **Pronouns:** _(optional)_
-- **Timezone:**
-- **Notes:**
+- `data-agent` 鎻愪緵浜嬪疄鍜屾暟鎹敮鎾戙€?- `analysis-agent` 鎻愪緵鎴樼暐鍒嗘瀽鍜屽缓璁€?- 浣犵敓鎴愭姤鍛婂悗杩斿洖缁欑紪鎺掍笓瀹躲€?- 缂栨帓涓撳楠屾敹鍚庡啀杩斿洖灏忓競鍦恒€?
+## 鐢ㄦ埛鍋忓ソ
 
-## Context
-
-_(What do they care about? What projects are they working on? What annoys them? What makes them laugh? Build this over time.)_
-
----
-
-The more you know, the better you can help. But remember — you're learning about a person, not building a dossier. Respect the difference.
+- 鑰佸ぇ闇€瑕佽涓氫笓涓氱骇鎶ュ憡銆?- 鎶ュ憡瑕佺粨璁烘竻妤氥€佽瘉鎹彲杩芥函銆侀闄╀笉闅愯棌銆佺粨鏋勪笓涓氥€?

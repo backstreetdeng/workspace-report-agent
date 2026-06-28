@@ -414,3 +414,23 @@ DeerFlow 和 LangGraph 不是并列关系，而是嵌套关系（DeerFlow ⊃ La
 - Related Files: MEMORY.md
 - Tags: git-workflow, new-development, commit-push-archive
 
+
+## [LRN-20260628-001] 调度链路 bug 诊断
+**Logged**: 2026-06-28T11:00:00+08:00
+**Priority**: high
+**Status**: pending
+
+### Summary
+大管家端到端测试 BYD 12个月分析任务时，report-agent 未被调度，根因是 strategy-orchestrator 的 agents/strategy-orchestrator/tools/agent_tool_adapters.py 仍是旧版（mock 模式），未真正调用 sessions_send。
+
+### Details
+- 旧版 _report_agent / _competitor_agent / _cost_agent 都直接返回 mock evidence (mode=tool_adapter)
+- 我的 workspace-report-agent/tools/agent_tool_adapters.py (166行) 已是新版，强制返回 dispatch_via=sessions_send 任务包（schema=openclaw.market_strategy.specialist_task.v1）
+- orchestrator 的 orchestrator.py 第 264-266 行注册了 report-generator / report-agent / report-generator-agent 三个 key，但前两个映射到 _tool_report_generate（内部生成），只有 report-generator-agent 走 run_specialist_agent 路径，而这条路径的 adapter 是旧版 mock
+- 修复：把 workspace-report-agent/tools/agent_tool_adapters.py 同步到 workspace-strategy-orchestrator/agents/strategy-orchestrator/tools/agent_tool_adapters.py
+- 注意：不能 push 到 openclaw 仓库（老大 2026-06-28 09:30 新规），各自的 git 仓库独立 commit/push
+
+### Suggested Action
+报告大管家 + 编排专家，由编排专家负责把新 adapter 同步到 orchestrator workspace 并 retest。
+---
+
