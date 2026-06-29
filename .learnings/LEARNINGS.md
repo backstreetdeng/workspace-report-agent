@@ -1,4 +1,4 @@
-﻿# Learnings
+# Learnings
 
 Corrections, insights, and knowledge gaps captured during development.
 
@@ -434,3 +434,92 @@ DeerFlow 和 LangGraph 不是并列关系，而是嵌套关系（DeerFlow ⊃ La
 报告大管家 + 编排专家，由编排专家负责把新 adapter 同步到 orchestrator workspace 并 retest。
 ---
 
+
+## [LRN-20260629-001] html-report-generator skill 重建 + 关键 bug 教训
+**Logged**: 2026-06-29T10:36:00+08:00
+**Priority**: high
+**Status**: resolved
+**Area**: skills/html-report-generation
+
+### Summary
+git 代码事故导致 `skills/html-report-generator/` 整个 skill 丢失（SKILL.md + html_report_generator.py 都没了），但 `AGENTS.md` / `TOOLS.md` 还保留着强制调用要求。重建过程中深度复盘了两次历史 bug，再次确认了不能手动拼接 HTML 的硬性约束。
+
+### Details
+
+#### 重建文件清单
+| 文件 | 用途 | 字节数 |
+|---|---|---|
+| `skills/html-report-generator/SKILL.md` | Skill 元数据 + 工具定义 + 校验清单 | 3856 |
+| `skills/html-report-generator/html_report_generator.py` | HTML 生成 Python 工具（含完整 CSS/JS） | 14024 |
+| `IDENTITY.md` | 身份卡新增 HTML skill 引用 | 1916 |
+| `SOUL.md` | 双格式交付原则 + 禁止手动拼接 | 2845 |
+| `TOOLS.md` | HTML 生成规范 + 7 项校验清单 + 正确流程 | 4538 |
+| `SKILL.md` (顶层) | 修复路径错误 + 新增 skill 列表 | 3844 |
+| `AGENTS.md` | HTML 调用代码示例 + 更新日志 v3.1 | 4279 |
+
+#### 关键 bug 教训（两次踩坑，必须记住）
+
+**Bug 1: updateUI() 函数缺失导致翻页失效（2026-06-28 零跑 HTML）**
+- 症状：HTML 生成后无法翻页，进度条和页码不更新
+- 根因：JavaScript 缺少 `updateUI()` 函数定义 + 初始化调用
+- 修复：在脚本末尾添加：
+  ```js
+  document.addEventListener('DOMContentLoaded', () => {
+    total = document.querySelectorAll('.slide').length;
+    updateUI();  // 必须存在
+  });
+  ```
+- 经验：所有 `goTo` / `next` / `prev` 函数内部必须调用 `updateUI()`，且 DOMContentLoaded 时必须初始化调用一次
+
+**Bug 2: 自定义光标特效遗漏（2026-06-28 老大截图指出）**
+- 症状：HTML 报告中鼠标显示为系统默认箭头，没有蓝色圆圈
+- 根因：手动拼接 HTML 时忘记复制 .cursor / .cursor.hovering 样式 + mousemove 跟踪逻辑
+- 修复：完整保留 CSS + HTML div + JS 跟踪代码：
+  ```css
+  .cursor {
+    position: fixed;
+    width: 32px; height: 32px;
+    border: 2px solid var(--accent);
+    border-radius: 50%;
+    ...
+  }
+  .cursor.hovering {
+    width: 52px; height: 52px;
+    background-color: var(--accent-glow);
+  }
+  ```
+  ```html
+  <div class="cursor" id="cursor"></div>
+  ```
+  ```js
+  document.addEventListener('mousemove', (e) => {
+    if (cursorEl) {
+      cursorEl.style.left = e.clientX + 'px';
+      cursorEl.style.top = e.clientY + 'px';
+    }
+  });
+  ```
+
+#### 7 项 HTML 校验清单（生成后必须自检通过）
+1. 键盘翻页 ←→（含 Home/End/PageUp/PageDown）
+2. 触摸滑动（移动端）
+3. 进度条更新（width 同步）
+4. 页码显示 `01/07` 格式（零填充）
+5. 动画效果（slide 切换 fade + translateY）
+6. 所有 slides 可访问
+7. 无 JS 报错（Console 无红字）
++ 自定义圆形光标（蓝色 32px，悬停控件时 52px）
+
+#### 正确流程（固化到 TOOLS.md）
+HTML 生成 → 自检验证 → 发现问题 → 修复 → 再次验证 → 确认无误 → 交付
+
+### Suggested Action
+1. 每次生成 HTML 报告前**先检查本条目**，确认 7 项校验清单无遗漏
+2. **绝对不允许**手动拼接 HTML，必须调用 `from skills.html_report_generator.html_report_generator import generate_from_markdown`
+3. 如发现 HTML 自检失败，**不允许绕过校验直接交付**，必须修复后重新生成
+4. skill 文件如有更新，**必须同步更新** AGENTS.md / SOUL.md / TOOLS.md / IDENTITY.md / SKILL.md
+
+### Metadata
+- Source: user_feedback (老大 2026-06-29 截图指出光标缺失)
+- Related Files: `skills/html-report-generator/SKILL.md`, `skills/html-report-generator/html_report_generator.py`, `AGENTS.md`, `SOUL.md`, `TOOLS.md`, `IDENTITY.md`, `SKILL.md`
+- Tags: html-report, skill-recovery, custom-cursor, updateUI, validation-checklist

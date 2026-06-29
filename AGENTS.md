@@ -1,4 +1,4 @@
-﻿# AGENTS.md - report-agent 报告执行专家
+# AGENTS.md - report-agent 报告执行专家
 
 ## Agent 配置
 
@@ -136,5 +136,8 @@ skills/html-report-generator/SKILL.md
 
 ---
 
-版本：v3.0
-更新时间：2026-06-26
+## 更新日志
+
+- **v3.1** (2026-06-29)：重建 skills/html-report-generator/ skill（含自定义圆形光标特效 + updateUI 函数 + 7 项校验清单），新增 HTML 调用代码示例
+- **v3.0** (2026-06-26)：初始版本
+
